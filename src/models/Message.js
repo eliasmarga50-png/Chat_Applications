@@ -2,48 +2,145 @@ import mongoose from 'mongoose';
 
 const { Schema } = mongoose;
 
-// Embedded subdocument: lives and dies with its message.
+// Embedded code snippet.
 const codeSnippetSchema = new Schema(
   {
-    language: { type: String, trim: true, lowercase: true, maxlength: 30, default: 'plaintext' },
-    filename: { type: String, trim: true, maxlength: 255 },
+    language: {
+      type: String,
+      trim: true,
+      lowercase: true,
+      maxlength: 30,
+      default: 'plaintext'
+    },
+
+    filename: {
+      type: String,
+      trim: true,
+      maxlength: 255
+    },
+
     code: {
       type: String,
       required: [true, 'Code snippet cannot be empty'],
-      maxlength: [20000, 'Snippet too large (max 20,000 chars); large files use streams in Step 5'],
-    },
+      maxlength: [
+        20000,
+        'Snippet too large (max 20,000 chars)'
+      ]
+    }
   },
   { _id: false }
 );
 
+// Main message schema.
 const messageSchema = new Schema(
   {
-    room: { type: Schema.Types.ObjectId, ref: 'Room', required: true },
-    sender: { type: Schema.Types.ObjectId, ref: 'User', required: true },
-    type: { type: String, enum: ['text', 'code', 'system'], default: 'text' },
-    content: { type: String, trim: true, maxlength: [4000, 'Message too long (max 4000 chars)'] },
-    // `default: undefined` => the field is absent (not an empty object) on plain text messages.
-    codeSnippet: { type: codeSnippetSchema, default: undefined },
-    editedAt: { type: Date },
+    room: {
+      type: Schema.Types.ObjectId,
+      ref: 'Room',
+      required: true
+    },
+
+    sender: {
+      type: Schema.Types.ObjectId,
+      ref: 'User',
+      required: true
+    },
+
+    type: {
+      type: String,
+      enum: ['text', 'code', 'system'],
+      default: 'text'
+    },
+
+    content: {
+      type: String,
+      trim: true,
+      maxlength: [
+        4000,
+        'Message too long (max 4000 chars)'
+      ]
+    },
+
+    codeSnippet: {
+      type: codeSnippetSchema,
+      default: undefined
+    },
+
+    editedAt: {
+      type: Date
+    }
   },
-  { timestamps: true } // adds createdAt / updatedAt automatically
+  {
+    timestamps: true
+  }
 );
 
-// Cross-field rules a single-field validator can't express.
+// Cross-field validation.
 messageSchema.pre('validate', function () {
-  if (!this.content && !this.codeSnippet) {
-    this.invalidate('content', 'A message needs text content or a code snippet');
+  const hasContent =
+    typeof this.content === 'string' &&
+    this.content.length > 0;
+
+  const hasCode =
+    typeof this.codeSnippet?.code === 'string' &&
+    this.codeSnippet.code.trim().length > 0;
+
+  if (this.type === 'text') {
+    if (!hasContent) {
+      this.invalidate(
+        'content',
+        'Text messages cannot be empty'
+      );
+    }
+
+    if (this.codeSnippet) {
+      this.invalidate(
+        'codeSnippet',
+        'Text messages cannot contain code snippets'
+      );
+    }
   }
-  if (this.type === 'code' && !this.codeSnippet) {
-    this.invalidate('codeSnippet', 'A message of type "code" requires a codeSnippet');
+
+  if (this.type === 'code') {
+    if (!hasCode) {
+      this.invalidate(
+        'codeSnippet',
+        'Code messages must contain a non-empty code snippet'
+      );
+    }
+  }
+
+  if (this.type === 'system') {
+    if (!hasContent) {
+      this.invalidate(
+        'content',
+        'System messages cannot be empty'
+      );
+    }
+
+    if (this.codeSnippet) {
+      this.invalidate(
+        'codeSnippet',
+        'System messages cannot contain code snippets'
+      );
+    }
   }
 });
 
-// Hot path: "latest N messages in a room", paginated by time.
-// Equality (room) -> Sort (createdAt desc). Serves both the sort and the filter.
-messageSchema.index({ room: 1, createdAt: -1 });
+// Room message history.
+messageSchema.index({
+  room: 1,
+  createdAt: -1,
+  _id: -1
+});
 
-// Secondary path: a user's recent activity (profiles, moderation).
-messageSchema.index({ sender: 1, createdAt: -1 });
+// User activity history.
+messageSchema.index({
+  sender: 1,
+  createdAt: -1
+});
 
-export const Message = mongoose.models.Message ?? mongoose.model('Message', messageSchema);
+// Export model.
+export const Message =
+  mongoose.models.Message ??
+  mongoose.model('Message', messageSchema);
