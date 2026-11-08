@@ -28,7 +28,8 @@ export async function connectDB({ retries = 5, baseDelayMs = 1000 } = {}) {
       await mongoose.connect(env.MONGODB_URI, {
         maxPoolSize: 10,                 // sockets in the pool
         serverSelectionTimeoutMS: 5000,  // give up finding a server after 5s
-        socketTimeoutMS: 45000,          // drop sockets idle on an op for 45s
+        socketTimeoutMS: 45000,
+        autoIndex: !env.isProd,          // drop sockets idle on an op for 45s
       });
       return mongoose.connection;
     } catch (err) {
