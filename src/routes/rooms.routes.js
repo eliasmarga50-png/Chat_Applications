@@ -3,6 +3,7 @@ import { Router } from 'express';
 import { Room, Message, RoomMember } from '../models/index.js';
 import { AppError } from '../utils/AppError.js';
 import { env } from '../config/env.js';
+import { ensureRoomAccess } from '../utils/roomAccess.js';
 
 const router = Router();
 
