@@ -1,6 +1,6 @@
 
 import { Router } from 'express';
-import { Room, Message, RoomMember } from '../models/index.js';
+import { Room, Message } from '../models/index.js';
 import { AppError } from '../utils/AppError.js';
 import { env } from '../config/env.js';
 import { ensureRoomAccess } from '../utils/roomAccess.js';
@@ -38,35 +38,6 @@ async function findRoomOr404(slug) {
   }
 
   return room;
-}
-
-// Private rooms require an authenticated member.
-// Public rooms remain accessible without membership.
-async function ensureRoomAccess(room, userId) {
-  if (!room.isPrivate) {
-    return;
-  }
-
-  if (!userId) {
-    throw new AppError(
-      'Authentication is required to access this room',
-      401,
-      'AUTHENTICATION_REQUIRED'
-    );
-  }
-
-  const membership = await RoomMember.findOne({
-    room: room._id,
-    user: userId
-  }).lean();
-
-  if (!membership) {
-    throw new AppError(
-      'You do not have access to this room',
-      403,
-      'ROOM_ACCESS_DENIED'
-    );
-  }
 }
 
 // Validate the requested message limit.
