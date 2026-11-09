@@ -2,8 +2,10 @@ import http from 'node:http';
 import { env } from './config/env.js';
 import { connectDB, disconnectDB } from './config/db.js';
 import { createApp } from './app.js';
+import { createSocketServer } from './sockets/index.js';
 
 let server;
+let io;
 let shuttingDown = false;
 
 async function shutdown(reason, exitCode = 0) {
@@ -19,9 +21,12 @@ async function shutdown(reason, exitCode = 0) {
   }, 10_000).unref();
 
   try {
-    if (server) {
+    if (io) {
+      // Disconnects every socket, then closes the underlying HTTP server too.
+      // WebSockets are long-lived, so server.close() alone would wait forever.
+      await new Promise((resolve) => io.close(resolve));
+    } else if (server) {
       server.closeIdleConnections?.();
-      // Stop accepting new connections; resolves when in-flight requests finish.
       await new Promise((resolve) => server.close(resolve));
     }
     await disconnectDB();
@@ -51,11 +56,14 @@ process.on('SIGTERM', () => shutdown('SIGTERM'));
 async function main() {
   await connectDB(); // don't accept traffic until the DB is ready
 
-  // http.createServer (rather than app.listen) gives us the raw server
-  // instance that Socket.io will attach to in Step 3.
+  // One http.Server, two protocols: Express handles normal requests, and
+  // Socket.io listens for /socket.io/ requests and 'upgrade' events on the same port.
   server = http.createServer(createApp());
+  io = createSocketServer(server);
+
   server.listen(env.PORT, () => {
     console.log(`[http] listening on http://localhost:${env.PORT} (${env.NODE_ENV})`);
+    console.log(`[socket] Socket.io attached at /socket.io/`);
   });
 }
 
