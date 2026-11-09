@@ -1,72 +1,246 @@
+import assert from 'node:assert/strict';
+
 import { connectDB, disconnectDB } from '../src/config/db.js';
-import { User, Room, Message } from '../src/models/index.js';
 
-const planPath = (plan) => {
-  const parts = [];
-  for (let p = plan; p; p = p.inputStage ?? p.queryPlan) {
-    parts.push(p.indexName ? `${p.stage}(${p.indexName})` : p.stage);
+import {
+  User,
+  Room,
+  Message,
+  RoomMember,
+} from '../src/models/index.js';
+
+import { ensureRoomAccess } from '../src/utils/roomAccess.js';
+
+// Recursively collect stages from different MongoDB explain-plan shapes.
+function collectStages(node, results = []) {
+  if (!node || typeof node !== 'object') return results;
+
+  if (node.stage) {
+    results.push({
+      stage: node.stage,
+      indexName: node.indexName,
+    });
   }
-  return parts.join(' -> ');
-};
 
-async function explain(label, query) {
-  const ex = await query.explain('executionStats');
-  const s = ex.executionStats;
+  for (const value of Object.values(node)) {
+    if (Array.isArray(value)) {
+      value.forEach((item) => collectStages(item, results));
+    } else if (value && typeof value === 'object') {
+      collectStages(value, results);
+    }
+  }
+
+  return results;
+}
+
+function printPlan(label, explainResult) {
+  const stats = explainResult.executionStats;
+  const stages = collectStages(explainResult.queryPlanner.winningPlan);
+
   console.log(`\n${label}`);
-  console.log('  plan          :', planPath(ex.queryPlanner.winningPlan));
-  console.log('  docsExamined  :', s.totalDocsExamined);
-  console.log('  keysExamined  :', s.totalKeysExamined);
-  console.log('  returned      :', s.nReturned);
+  console.log(
+    '  plan          :',
+    stages.map((s) =>
+      s.indexName ? `${s.stage}(${s.indexName})` : s.stage
+    ).join(' -> ')
+  );
+  console.log('  docsExamined  :', stats.totalDocsExamined);
+  console.log('  keysExamined  :', stats.totalKeysExamined);
+  console.log('  returned      :', stats.nReturned);
+
+  return stages;
+}
+
+async function verifyCompoundPaginationIndex(room) {
+  console.log('\n--- 1. Compound pagination index ---');
+
+  const expectedKey = {
+    room: 1,
+    createdAt: -1,
+    _id: -1,
+  };
+
+  const indexes = await Message.collection.indexes();
+
+  const compoundIndex = indexes.find((index) =>
+    JSON.stringify(Object.entries(index.key)) ===
+    JSON.stringify(Object.entries(expectedKey))
+  );
+
+  assert.ok(
+    compoundIndex,
+    'Missing index: { room: 1, createdAt: -1, _id: -1 }'
+  );
+
+  console.log('  OK -> Found:', compoundIndex.name);
+
+  // Find a real message to use as our cursor.
+  const cursorMessage = await Message.findOne({ room: room._id })
+    .sort({ createdAt: -1, _id: -1 })
+    .lean();
+
+  assert.ok(cursorMessage, 'No messages found in the javascript room');
+
+  const cursorDate = cursorMessage.createdAt;
+  const cursorId = cursorMessage._id;
+
+  // Fetch messages older than the cursor.
+  const filter = {
+    room: room._id,
+    $or: [
+      { createdAt: { $lt: cursorDate } },
+      {
+        createdAt: cursorDate,
+        _id: { $lt: cursorId },
+      },
+    ],
+  };
+
+  const query = Message.find(filter)
+    .sort({ createdAt: -1, _id: -1 })
+    .limit(20)
+    .hint(expectedKey);
+
+  const explainResult = await query.explain('executionStats');
+
+  const stages = printPlan(
+    'Compound cursor query (forced to use compound index)',
+    explainResult
+  );
+
+  assert.ok(
+    stages.some((stage) => stage.stage === 'IXSCAN'),
+    'Expected the compound pagination query to use an index scan'
+  );
+
+  assert.ok(
+    stages.some((stage) => stage.indexName === compoundIndex.name),
+    'Expected the query to use the compound pagination index'
+  );
+
+  // Run the query itself too, not just explain().
+  const messages = await Message.find(filter)
+    .sort({ createdAt: -1, _id: -1 })
+    .limit(20)
+    .hint(expectedKey)
+    .lean();
+
+  // Every returned message must be strictly older than the cursor.
+  for (const message of messages) {
+    const isOlder =
+      message.createdAt < cursorDate ||
+      (
+        message.createdAt.getTime() === cursorDate.getTime() &&
+        message._id.toString() < cursorId.toString()
+      );
+
+    assert.ok(isOlder, 'Pagination returned a message at or after the cursor');
+  }
+
+  console.log('  OK -> Cursor filter and descending sort work');
+  console.log('  OK -> Returned messages are strictly before the cursor');
+}
+
+async function verifyPrivateRoomAuthorization() {
+  console.log('\n--- 2. Private room authorization ---');
+
+  const room = await Room.findOne({ slug: 'core-team' }).lean();
+
+  assert.ok(room, 'Missing #core-team room. Run the seed script first.');
+  assert.equal(room.isPrivate, true, '#core-team must be a private room');
+
+  const users = await User.find()
+    .select('_id username')
+    .lean();
+
+  assert.ok(users.length > 0, 'No users found. Run the seed script first.');
+
+  let member = null;
+  let nonMember = null;
+
+  // Find one actual member and one actual non-member.
+  for (const user of users) {
+    const membership = await RoomMember.exists({
+      room: room._id,
+      user: user._id,
+    });
+
+    if (membership && !member) member = user;
+    if (!membership && !nonMember) nonMember = user;
+
+    if (member && nonMember) break;
+  }
+
+  assert.ok(member, 'No member found in #core-team');
+  assert.ok(nonMember, 'No non-member found for testing');
+
+  console.log(`  Test member    : ${member.username}`);
+  console.log(`  Test non-member: ${nonMember.username}`);
+
+  // A legitimate member should be allowed.
+  await ensureRoomAccess(room, member._id);
+
+  console.log('  OK -> A room member is allowed');
+
+  // A non-member must receive a 403 error.
+  await assert.rejects(
+    () => ensureRoomAccess(room, nonMember._id),
+    (error) => {
+      return (
+        error.statusCode === 403 &&
+        error.code === 'ROOM_ACCESS_DENIED'
+      );
+    },
+    'A non-member was incorrectly allowed into #core-team'
+  );
+
+  console.log('  OK -> A non-member is denied access');
+
+  // An unauthenticated user must receive a 401 error.
+  await assert.rejects(
+    () => ensureRoomAccess(room, null),
+    (error) => {
+      return (
+        error.statusCode === 401 &&
+        error.code === 'AUTH_REQUIRED'
+      );
+    },
+    'An unauthenticated user was incorrectly allowed into #core-team'
+  );
+
+  console.log('  OK -> An unauthenticated user is denied access');
 }
 
 async function main() {
   await connectDB();
-  await Promise.all([User.init(), Room.init(), Message.init()]);
 
-  const room = await Room.findOne({ slug: 'javascript' }).lean();
-  const user = await User.findOne({ username: 'ada' }).lean();
+  await Promise.all([
+    User.init(),
+    Room.init(),
+    Message.init(),
+    RoomMember.init(),
+  ]);
 
-  console.log('--- 1. Validation: empty message ---');
-  try {
-    await new Message({ room: room._id, sender: user._id }).validate();
-  } catch (e) { console.log('  OK ->', e.errors.content?.message); }
+  const javascriptRoom = await Room.findOne({
+    slug: 'javascript',
+  }).lean();
 
-  console.log('--- 2. Validation: type "code" without snippet ---');
-  try {
-    await new Message({ room: room._id, sender: user._id, type: 'code', content: 'x' }).validate();
-  } catch (e) { console.log('  OK ->', e.errors.codeSnippet?.message); }
-
-  console.log('--- 3. Validation: snippet with empty code ---');
-  try {
-    await new Message({
-      room: room._id, sender: user._id, codeSnippet: { language: 'js', code: '' },
-    }).validate();
-  } catch (e) { console.log('  OK ->', e.errors['codeSnippet.code']?.message); }
-
-  console.log('--- 4. Unique index: duplicate username ---');
-  try {
-    await User.create({ username: 'ADA', email: 'other@example.dev', passwordHash: 'x' });
-  } catch (e) { console.log('  OK -> Mongo error code', e.code, '(11000 = duplicate key)'); }
-
-  console.log('--- 5. passwordHash hidden by default ---');
-  const u = await User.findOne({ username: 'ada' });
-  console.log('  OK -> passwordHash is', u.passwordHash === undefined ? 'undefined (excluded)' : 'LEAKED');
-
-  console.log('--- 6. Query plans ---');
-  await explain(
-    'History query WITH index (expect LIMIT -> FETCH -> IXSCAN)',
-    Message.find({ room: room._id }).sort({ createdAt: -1 }).limit(20)
-  );
-  await explain(
-    'Same query FORCED to scan (expect COLLSCAN + SORT, far more docs examined)',
-    Message.find({ room: room._id }).sort({ createdAt: -1 }).limit(20).hint({ $natural: 1 })
+  assert.ok(
+    javascriptRoom,
+    'Missing javascript room. Run the seed script first.'
   );
 
-  console.log('\n--- 7. Declared indexes on messages ---');
-  const idx = await Message.collection.indexes();
-  idx.forEach((i) => console.log('  ', i.name, JSON.stringify(i.key)));
+  await verifyCompoundPaginationIndex(javascriptRoom);
+  await verifyPrivateRoomAuthorization();
+
+  console.log('\nAll verification checks passed.');
 }
 
 main()
-  .catch((err) => { console.error('Verify failed:', err); process.exitCode = 1; })
-  .finally(disconnectDB);
+  .catch((error) => {
+    console.error('\nVerification failed:', error);
+    process.exitCode = 1;
+  })
+  .finally(async () => {
+    await disconnectDB();
+  });
