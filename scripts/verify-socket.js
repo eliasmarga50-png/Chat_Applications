@@ -142,7 +142,7 @@ async function main() {
   assert.equal((await call(ada, 'room:join', { slug: 'core-team' })).ok, true);
   console.log('  OK -> private-room membership enforced for authenticated users');
 
-  assert.equal((await call(ada, 'room:join', 42)).error.code, 'INVALID_ROOM_SLUG');
+  assert.equal((await call(ada, 'room:join', 42)).error.code, 'INVALID_PAYLOAD');
   assert.equal((await call(ada, 'message:send', { slug: 'javascript', content: 'still alive' })).ok, true);
   console.log('  OK -> bad payload answered with an error, server still serving');
 
