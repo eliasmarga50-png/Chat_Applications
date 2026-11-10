@@ -1,6 +1,8 @@
 import { env } from '../src/config/env.js';
 import { connectDB, disconnectDB } from '../src/config/db.js';
 
+import { hashPassword } from '../src/utils/password.js';
+
 import {
   User,
   Room,
@@ -13,7 +15,8 @@ if (env.isProd) {
   process.exit(1);
 }
 
-const PLACEHOLDER_HASH = 'placeholder-hash-replaced-in-step-4';
+// Every seeded user logs in with this password (dev only; seed refuses to run in production).
+const DEV_PASSWORD = 'devpassword123';
 
 const users = [
   {
@@ -94,6 +97,9 @@ const rooms = [
 async function main() {
   await connectDB();
 
+  // Hash once; scrypt runs on the libuv thread pool, so this doesn't block the loop.
+  const passwordHash = await hashPassword(DEV_PASSWORD);
+
   // Wait until all model indexes exist.
   await Promise.all([
     User.init(),
@@ -108,10 +114,7 @@ async function main() {
       updateOne: {
         filter: { username: user.username },
         update: {
-          $set: user,
-          $setOnInsert: {
-            passwordHash: PLACEHOLDER_HASH
-          }
+          $set: { ...user, passwordHash }
         },
         upsert: true
       }
@@ -268,6 +271,7 @@ async function main() {
   console.log(
     `Seeded ${users.length} users, ${rooms.length} rooms, ${membershipOperations.length} memberships, ${jsMessages.length + pyMessages.length} messages`
   );
+  console.log(`Dev login: username ada | linus | grace, password "${DEV_PASSWORD}"`);
 }
 
 main()
