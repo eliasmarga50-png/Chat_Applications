@@ -1,30 +1,55 @@
 import { scrypt, randomBytes, timingSafeEqual } from 'node:crypto';
 import { promisify } from 'node:util';
 
-// crypto.scrypt is CPU-heavy by design. The callback version runs on libuv's
-// thread pool, so promisify() gives us await-able hashing that does NOT block
-// the event loop (a synchronous scryptSync would freeze every connected socket).
 const scryptAsync = promisify(scrypt);
 
 const KEY_LENGTH = 64;
+const SALT_LENGTH = 16;
+const MAX_PASSWORD_BYTES = 1024;
 
-// Stored format: scrypt$<salt hex>$<key hex>
 export async function hashPassword(password) {
-  const salt = randomBytes(16);
+  if (
+    typeof password !== 'string' ||
+    Buffer.byteLength(password, 'utf8') === 0 ||
+    Buffer.byteLength(password, 'utf8') > MAX_PASSWORD_BYTES
+  ) {
+    throw new TypeError('Password must be a non-empty string of at most 1024 bytes');
+  }
+
+  const salt = randomBytes(SALT_LENGTH);
   const key = await scryptAsync(password, salt, KEY_LENGTH);
+
   return `scrypt$${salt.toString('hex')}$${key.toString('hex')}`;
 }
 
 export async function verifyPassword(password, stored) {
-  if (typeof stored !== 'string') return false;
+  if (
+    typeof password !== 'string' ||
+    Buffer.byteLength(password, 'utf8') === 0 ||
+    Buffer.byteLength(password, 'utf8') > MAX_PASSWORD_BYTES ||
+    typeof stored !== 'string'
+  ) {
+    return false;
+  }
 
-  const [scheme, saltHex, keyHex] = stored.split('$');
-  if (scheme !== 'scrypt' || !saltHex || !keyHex) return false; // e.g. old placeholder hashes
+  const parts = stored.split('$');
 
+  if (parts.length !== 3) return false;
+
+  const [scheme, saltHex, keyHex] = parts;
+
+  if (
+    scheme !== 'scrypt' ||
+    !/^[a-f0-9]{32}$/i.test(saltHex) ||
+    !/^[a-f0-9]{128}$/i.test(keyHex)
+  ) {
+    return false;
+  }
+
+  const salt = Buffer.from(saltHex, 'hex');
   const expected = Buffer.from(keyHex, 'hex');
-  if (expected.length !== KEY_LENGTH) return false;
 
-  const actual = await scryptAsync(password, Buffer.from(saltHex, 'hex'), KEY_LENGTH);
-  // Constant-time comparison: plain === leaks how many leading bytes matched.
+  const actual = await scryptAsync(password, salt, KEY_LENGTH);
+
   return timingSafeEqual(actual, expected);
 }
