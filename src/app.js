@@ -3,6 +3,7 @@ import helmet from 'helmet';
 import morgan from 'morgan';
 import healthRoutes from './routes/health.routes.js';
 import roomsRoutes from './routes/rooms.routes.js';
+import authRoutes from './routes/auth.routes.js';
 import { notFound } from './middleware/notFound.js';
 import { errorHandler } from './middleware/errorHandler.js';
 import { env } from './config/env.js';
@@ -16,6 +17,7 @@ export function createApp() {
   app.use(express.json({ limit: '100kb' })); // cap body size; Step 5 handles big payloads via streams
 
   app.use('/health', healthRoutes);
+  app.use('/api/auth', authRoutes);
   app.use('/api/rooms', roomsRoutes);
 
   app.use(notFound);     // must come after all routes
