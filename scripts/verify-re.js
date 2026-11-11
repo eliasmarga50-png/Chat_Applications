@@ -160,12 +160,17 @@ async function main() {
 
   const adaLogin = await login('ada');
   const linusLogin = await login('linus');
+  
+const adaId =
+  adaLogin.user.id ??
+  adaLogin.user._id;
 
-  const adaId =
-    adaLogin.body.user.id ??
-    adaLogin.body.user._id;
+const linusId =
+  linusLogin.user.id ??
+  linusLogin.user._id;
 
-  assert.ok(adaId);
+assert.ok(adaId);
+assert.ok(linusId);
 
   logSuccess('Ada and Linus authenticated successfully');
 
