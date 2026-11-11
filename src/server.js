@@ -1,4 +1,5 @@
 import http from 'node:http';
+import { initializeStorage } from './config/storage.js';
 import { env } from './config/env.js';
 import { connectDB, disconnectDB } from './config/db.js';
 import { createApp } from './app.js';
@@ -54,16 +55,22 @@ process.on('SIGINT', () => shutdown('SIGINT'));
 process.on('SIGTERM', () => shutdown('SIGTERM'));
 
 async function main() {
-  await connectDB(); // don't accept traffic until the DB is ready
+  await connectDB();
 
-  // One http.Server, two protocols: Express handles normal requests, and
-  // Socket.io listens for /socket.io/ requests and 'upgrade' events on the same port.
+  // Ensure upload directory exists before accepting requests.
+  await initializeStorage();
+
   server = http.createServer(createApp());
   io = createSocketServer(server);
 
   server.listen(env.PORT, () => {
-    console.log(`[http] listening on http://localhost:${env.PORT} (${env.NODE_ENV})`);
-    console.log(`[socket] Socket.io attached at /socket.io/`);
+    console.log(
+      `[http] listening on http://localhost:${env.PORT}`
+    );
+
+    console.log(
+      `[socket] Socket.io attached at /socket.io/`
+    );
   });
 }
 
