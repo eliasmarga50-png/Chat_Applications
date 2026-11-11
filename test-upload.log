@@ -1,0 +1,8 @@
+Node.js Streaming Test
+=====================
+
+Event Loop: Non-blocking I/O
+Libuv: Filesystem operations
+Streams: Readable -> Transform -> Writable
+
+Testing large log ingestion.
