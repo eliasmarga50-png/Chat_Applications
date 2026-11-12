@@ -7,7 +7,7 @@ import healthRoutes from './routes/health.routes.js';
 import roomsRoutes from './routes/rooms.routes.js';
 import authRoutes from './routes/auth.routes.js';
 import uploadsRoutes from './routes/uploads.routes.js';
-
+import executeRoutes from './routes/execute.routes.js'; 
 import { notFound } from './middleware/notFound.js';
 import { errorHandler } from './middleware/errorHandler.js';
 import { env } from './config/env.js';
@@ -33,6 +33,7 @@ export function createApp() {
   app.use('/api/auth', authRoutes);
   app.use('/api/rooms', roomsRoutes);
   app.use('/api/uploads', uploadsRoutes);
+  app.use('/api/execute', executeRoutes); 
 
   app.use(notFound);
   app.use(errorHandler);
