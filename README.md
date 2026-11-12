@@ -14,3 +14,18 @@ The project is built incrementally to dive deep into underlying Node.js core pri
 - **Dual-Layer State Management:** Leverages persistent disk-bound structures for archival records combined with rapid in-memory tracking for fleeting states like typing indicators and online user counts.
 - **Developer-Centric Security:** Strict sanitization pipelines to mitigate Markdown injection and cross-site scripting (XSS), keeping code blocks raw but entirely harmless.
 - **Isolated Code Sandboxing:** Spawns restricted child processes or isolated native `vm` contexts to safely execute user-submitted code snippets directly inside the backend.
+
+## Sandboxed code execution
+
+`POST /api/execute` runs a JavaScript snippet in an isolated child process and returns its console output.
+
+```bash
+curl -X POST http://localhost:4000/api/execute \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"code":"console.log([1,2,3].map(n => n * 2))"}'
+```
+
+Response (HTTP 200 whenever the snippet was run): `{ status, stdout, stderr, error, truncated, durationMs }`
+where `status` is `ok`, `error`, `timeout`, `memory_limit` or `crashed`.
+
+Limits (override via `.env`): `EXEC_TIMEOUT_MS=2000`, `EXEC_MEMORY_MB=64`, `EXEC_MAX_CONCURRENT=4`, `EXEC_MAX_CODE_CHARS=10000`; 10 runs/minute and 1 concurrent run per user. See `workers/code-execution/README.md` for the isolation design and its limits.
