@@ -1,16 +1,22 @@
-
 import { Router } from 'express';
+
 import { Room, Message } from '../models/index.js';
+
 import { AppError } from '../utils/AppError.js';
 import { env } from '../config/env.js';
 import { ensureRoomAccess } from '../utils/roomAccess.js';
+
+import { sanitizeContent } from '../utils/sanitizeContent.js';
 
 const router = Router();
 
 const DEFAULT_LIMIT = 20;
 const MAX_LIMIT = 100;
 
-// Validate a room slug and find the corresponding room.
+// ----------------------------------------
+// ROOM VALIDATION
+// ----------------------------------------
+
 async function findRoomOr404(slug) {
   if (
     typeof slug !== 'string' ||
@@ -26,7 +32,7 @@ async function findRoomOr404(slug) {
   const normalizedSlug = slug.toLowerCase();
 
   const room = await Room.findOne({
-    slug: normalizedSlug
+    slug: normalizedSlug,
   }).lean();
 
   if (!room) {
@@ -40,7 +46,10 @@ async function findRoomOr404(slug) {
   return room;
 }
 
-// Validate the requested message limit.
+// ----------------------------------------
+// PAGINATION VALIDATION
+// ----------------------------------------
+
 function parseLimit(rawLimit) {
   if (rawLimit === undefined) {
     return DEFAULT_LIMIT;
@@ -74,7 +83,10 @@ function parseLimit(rawLimit) {
   return limit;
 }
 
-// Validate a canonical UTC ISO date.
+// ----------------------------------------
+// CURSOR VALIDATION
+// ----------------------------------------
+
 function parseCursorDate(rawDate) {
   if (
     typeof rawDate !== 'string' ||
@@ -103,7 +115,6 @@ function parseCursorDate(rawDate) {
   return date;
 }
 
-// Validate the cursor's MongoDB ObjectId.
 function parseCursorId(rawId) {
   if (
     typeof rawId !== 'string' ||
@@ -119,60 +130,84 @@ function parseCursorId(rawId) {
   return rawId;
 }
 
+// ----------------------------------------
 // GET /api/rooms
-// List public rooms alphabetically.
+// ----------------------------------------
+
 router.get('/', async (req, res) => {
   const rooms = await Room.find({
-    isPrivate: false
+    isPrivate: false,
   })
-    .sort({ name: 1 })
+    .sort({
+      name: 1,
+    })
     .lean();
 
   res.json({
     count: rooms.length,
-    rooms
+    rooms,
   });
 });
 
-// GET /api/rooms/__debug/boom
-// Development-only asynchronous error test.
+// ----------------------------------------
+// DEVELOPMENT ERROR TEST
+// ----------------------------------------
+
 if (!env.isProd) {
   router.get('/__debug/boom', async () => {
     await Promise.resolve();
-    throw new Error('Simulated async failure');
+
+    throw new Error(
+      'Simulated async failure'
+    );
   });
 }
 
+// ----------------------------------------
 // GET /api/rooms/:slug
-// Find one room and verify access.
-router.get('/:slug', async (req, res) => {
-  const room = await findRoomOr404(req.params.slug);
+// ----------------------------------------
 
-  await ensureRoomAccess(room, req.user?._id);
+router.get('/:slug', async (req, res) => {
+  const room = await findRoomOr404(
+    req.params.slug
+  );
+
+  await ensureRoomAccess(
+    room,
+    req.user?._id
+  );
 
   res.json(room);
 });
 
-// GET /api/rooms/:slug/messages?limit=20
-// GET /api/rooms/:slug/messages?limit=20&before=...&beforeId=...
-// Retrieve messages using compound cursor pagination.
+// ----------------------------------------
+// GET ROOM MESSAGES
+// ----------------------------------------
+
 router.get('/:slug/messages', async (req, res) => {
-  const room = await findRoomOr404(req.params.slug);
+  const room = await findRoomOr404(
+    req.params.slug
+  );
 
-  // Check whether the requester can access this room.
-  await ensureRoomAccess(room, req.user?._id);
+  // 1. Verify room access.
+  await ensureRoomAccess(
+    room,
+    req.user?._id
+  );
 
-  // Validate the requested page size.
+  // 2. Validate pagination limit.
   const limit = parseLimit(req.query.limit);
 
-  // Start with messages belonging to this room.
   const filter = {
-    room: room._id
+    room: room._id,
   };
 
-  // Both cursor parameters must be provided together.
-  const hasBefore = req.query.before !== undefined;
-  const hasBeforeId = req.query.beforeId !== undefined;
+  // 3. Validate cursor parameters.
+  const hasBefore =
+    req.query.before !== undefined;
+
+  const hasBeforeId =
+    req.query.beforeId !== undefined;
 
   if (hasBefore !== hasBeforeId) {
     throw new AppError(
@@ -183,58 +218,81 @@ router.get('/:slug/messages', async (req, res) => {
   }
 
   if (hasBefore && hasBeforeId) {
-    const before = parseCursorDate(req.query.before);
-    const beforeId = parseCursorId(req.query.beforeId);
+    const before = parseCursorDate(
+      req.query.before
+    );
+
+    const beforeId = parseCursorId(
+      req.query.beforeId
+    );
 
     filter.$or = [
       {
         createdAt: {
-          $lt: before
-        }
+          $lt: before,
+        },
       },
       {
         createdAt: before,
         _id: {
-          $lt: beforeId
-        }
-      }
+          $lt: beforeId,
+        },
+      },
     ];
   }
 
-  // Fetch one extra message to determine whether another page exists.
+  // 4. Retrieve messages.
   const docs = await Message.find(filter)
     .sort({
       createdAt: -1,
-      _id: -1
+      _id: -1,
     })
     .limit(limit + 1)
-    .populate('sender', 'username displayName avatarUrl')
+    .populate(
+      'sender',
+      'username displayName avatarUrl'
+    )
     .lean();
 
   const hasMore = docs.length > limit;
 
-  // Remove the extra document used to detect another page.
+  // 5. Remove extra pagination document.
   const messages = hasMore
     ? docs.slice(0, limit)
     : docs;
 
-  // The cursor points to the last message in this page.
+  // 6. Sanitize historical message content.
+  // This does not change existing MongoDB records.
+  for (const message of messages) {
+    if (typeof message.content === 'string') {
+      message.content = sanitizeContent(
+        message.content
+      );
+    }
+  }
+
+  // 7. Generate next cursor.
   const lastMessage = messages.at(-1);
 
+  // 8. Return safe message history.
   res.json({
     room: {
       slug: room.slug,
-      name: room.name
+      name: room.name,
     },
+
     count: messages.length,
+
     hasMore,
+
     nextCursor: hasMore
       ? {
           createdAt: lastMessage.createdAt,
-          _id: lastMessage._id
+          _id: lastMessage._id,
         }
       : null,
-    messages
+
+    messages,
   });
 });
 
