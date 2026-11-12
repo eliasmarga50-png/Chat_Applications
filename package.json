@@ -11,7 +11,8 @@
     "seed": "node --env-file=.env scripts/seed.js",
     "verify:models": "node --env-file=.env scripts/verify-models.js",
     "verify:socket": "node --env-file=.env scripts/verify-socket.js",
-    "verify:re": "node --env-file=.env scripts/verify-re.js"
+    "verify:re": "node --env-file=.env scripts/verify-re.js",
+    "verify:security": "node --env-file=.env scripts/verify-security.js"
   },
   "engines": {
     "node": ">=20.6"
