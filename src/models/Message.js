@@ -2,7 +2,7 @@ import mongoose from 'mongoose';
 
 const { Schema } = mongoose;
 
-// Embedded code snippet.
+// Embedded developer code snippet.
 const codeSnippetSchema = new Schema(
   {
     language: {
@@ -10,13 +10,13 @@ const codeSnippetSchema = new Schema(
       trim: true,
       lowercase: true,
       maxlength: 30,
-      default: 'plaintext'
+      default: 'plaintext',
     },
 
     filename: {
       type: String,
       trim: true,
-      maxlength: 255
+      maxlength: 255,
     },
 
     code: {
@@ -24,9 +24,9 @@ const codeSnippetSchema = new Schema(
       required: [true, 'Code snippet cannot be empty'],
       maxlength: [
         20000,
-        'Snippet too large (max 20,000 chars)'
-      ]
-    }
+        'Snippet too large (max 20,000 chars)',
+      ],
+    },
   },
   { _id: false }
 );
@@ -37,41 +37,43 @@ const messageSchema = new Schema(
     room: {
       type: Schema.Types.ObjectId,
       ref: 'Room',
-      required: true
+      required: true,
     },
 
     sender: {
       type: Schema.Types.ObjectId,
       ref: 'User',
-      required: true
+      required: true,
     },
 
     type: {
       type: String,
       enum: ['text', 'code', 'system'],
-      default: 'text'
+      default: 'text',
     },
 
     content: {
       type: String,
-      trim: true,
+
+      // Raw message limit is 4,000 characters.
+      // Sanitized HTML may expand the stored content.
       maxlength: [
-        4000,
-        'Message too long (max 4000 chars)'
-      ]
+        20000,
+        'Message too long (max 20,000 stored chars)',
+      ],
     },
 
     codeSnippet: {
       type: codeSnippetSchema,
-      default: undefined
+      default: undefined,
     },
 
     editedAt: {
-      type: Date
-    }
+      type: Date,
+    },
   },
   {
-    timestamps: true
+    timestamps: true,
   }
 );
 
@@ -79,7 +81,7 @@ const messageSchema = new Schema(
 messageSchema.pre('validate', function () {
   const hasContent =
     typeof this.content === 'string' &&
-    this.content.length > 0;
+    this.content.trim().length > 0;
 
   const hasCode =
     typeof this.codeSnippet?.code === 'string' &&
@@ -131,13 +133,13 @@ messageSchema.pre('validate', function () {
 messageSchema.index({
   room: 1,
   createdAt: -1,
-  _id: -1
+  _id: -1,
 });
 
 // User activity history.
 messageSchema.index({
   sender: 1,
-  createdAt: -1
+  createdAt: -1,
 });
 
 // Export model.
