@@ -1,33 +1,64 @@
+
 import { AppError } from '../utils/AppError.js';
+import { getRedisClient } from '../config/redis.js';
 
-// Fixed-window, in-memory limiter keyed per authenticated user.
-// Like realtimeState, this lives in one process: use a shared store (Redis)
-// if the server is ever scaled horizontally.
-export function rateLimit({ windowMs, max, code = 'RATE_LIMITED', message = 'Too many requests' }) {
-  const hits = new Map(); // key -> { count, resetAt }
+const CONSUME_FIXED_WINDOW = `
+  local count = redis.call('INCR', KEYS[1])
+  if count == 1 then redis.call('PEXPIRE', KEYS[1], ARGV[1]) end
+  local ttl = redis.call('PTTL', KEYS[1])
+  return { count, ttl }
+`;
 
-  const sweep = setInterval(() => {
-    const now = Date.now();
-    for (const [key, entry] of hits) {
-      if (entry.resetAt <= now) hits.delete(key);
+export async function consumeRateLimitWithClient(client, { key, windowMs, max }) {
+  const result = await client.eval(CONSUME_FIXED_WINDOW, {
+    keys: [`devchat:rate:${key}`],
+    arguments: [String(windowMs)],
+  });
+
+  return {
+    allowed: Number(result[0]) <= max,
+    count: Number(result[0]),
+    retryAfterMs: Math.max(0, Number(result[1])),
+  };
+}
+
+export async function consumeRateLimit({ key, windowMs, max }) {
+  try {
+    return await consumeRateLimitWithClient(getRedisClient(), { key, windowMs, max });
+  } catch (error) {
+    console.error('[rate-limit] Redis operation failed:', error.message);
+    throw new AppError('Rate limiting service unavailable', 503, 'RATE_LIMIT_UNAVAILABLE');
+  }
+}
+
+export function rateLimit({
+  windowMs,
+  max,
+  code = 'RATE_LIMITED',
+  message = 'Too many requests',
+}) {
+  if (!Number.isInteger(windowMs) || windowMs < 1 || !Number.isInteger(max) || max < 1) {
+    throw new TypeError('rateLimit requires positive integer windowMs and max');
+  }
+
+  return async (req, res, next) => {
+    try {
+      const identity = req.user?.id ?? req.ip ?? req.socket.remoteAddress ?? 'unknown';
+      const result = await consumeRateLimit({
+        key: `rest:${req.baseUrl || ''}:${identity}`,
+        windowMs,
+        max,
+      });
+
+      if (!result.allowed) {
+        res.setHeader('Retry-After', String(Math.max(1, Math.ceil(result.retryAfterMs / 1000))));
+        throw new AppError(message, 429, code);
+      }
+
+      return next();
+    } catch (error) {
+      if (error instanceof AppError) throw error;
+      throw new AppError('Rate limiting service unavailable', 503, 'RATE_LIMIT_UNAVAILABLE');
     }
-  }, windowMs);
-  sweep.unref(); // never keep the process alive just for cleanup
-
-  return (req, res, next) => {
-    const key = req.user?.id ?? req.ip;
-    const now = Date.now();
-
-    let entry = hits.get(key);
-    if (!entry || entry.resetAt <= now) {
-      entry = { count: 0, resetAt: now + windowMs };
-      hits.set(key, entry);
-    }
-
-    if (++entry.count > max) {
-      res.setHeader('Retry-After', Math.ceil((entry.resetAt - now) / 1000));
-      throw new AppError(message, 429, code);
-    }
-    next();
   };
 }
