@@ -1,3 +1,4 @@
+
 {
   "name": "chat",
   "version": "1.0.0",
@@ -7,13 +8,13 @@
   "scripts": {
     "start": "node src/server.js",
     "dev": "node --watch --env-file=.env src/server.js",
-    "test": "node --env-file=.env --test",    
+    "start:cluster": "node src/cluster.js",
+    "test": "node --env-file=.env --test",
     "seed": "node --env-file=.env scripts/seed.js",
     "verify:models": "node --env-file=.env scripts/verify-models.js",
     "verify:socket": "node --env-file=.env scripts/verify-socket.js",
     "verify:re": "node --env-file=.env scripts/verify-re.js",
     "verify:security": "node --env-file=.env scripts/verify-security.js"
-    
   },
   "engines": {
     "node": ">=20.6"
@@ -36,7 +37,9 @@
     "mongoose": "^9.12.0",
     "morgan": "^1.12.1",
     "sanitize-html": "^2.18.1",
-    "socket.io": "^4.8.4"
+    "socket.io": "^4.8.4",
+    "@socket.io/redis-adapter": "^8.3.0",
+    "redis": "^4.7.0"
   },
   "devDependencies": {
     "socket.io-client": "^4.8.4"
