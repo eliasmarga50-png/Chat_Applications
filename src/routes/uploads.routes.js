@@ -8,36 +8,18 @@ import { Upload } from '../models/upload.js';
 import { UPLOAD_DIR } from '../config/storage.js';
 import { streamUpload } from '../services/upload.service.js';
 import { AppError } from '../utils/AppError.js';
+import { requireAuth } from '../middleware/requireAuth.js';
 
 const router = Router();
 
-// TEMPORARY development identity.
-// Replace with real REST JWT authentication before production.
-const DEV_USER_ID = process.env.DEV_UPLOAD_USER_ID;
-
-function requireUploadUser(req) {
-  if (process.env.NODE_ENV === 'production') {
-    throw new AppError(
-      'REST authentication middleware is required',
-      401,
-      'UNAUTHENTICATED'
-    );
-  }
-
-  if (!DEV_USER_ID) {
-    throw new AppError(
-      'Set DEV_UPLOAD_USER_ID for local testing',
-      401,
-      'UNAUTHENTICATED'
-    );
-  }
-
-  return DEV_USER_ID;
-}
+// Every upload endpoint requires a valid REST JWT.
+// requireAuth verifies the token and loads the user from MongoDB.
+router.use(requireAuth);
 
 // POST /api/uploads
+// Upload a file belonging to the authenticated user.
 router.post('/', async (req, res) => {
-  const uploaderId = requireUploadUser(req);
+  const uploaderId = req.user._id;
 
   const originalName = req.headers['x-file-name'];
   const mimeType = req.headers['content-type'];
@@ -63,9 +45,9 @@ router.post('/', async (req, res) => {
 });
 
 // GET /api/uploads/:id/content
-// Stream the stored file back to the client.
+// Only the user who uploaded the file can download it.
 router.get('/:id/content', async (req, res) => {
-  const uploaderId = requireUploadUser(req);
+  const uploaderId = req.user._id;
 
   const upload = await Upload.findOne({
     _id: req.params.id,
@@ -103,11 +85,14 @@ router.get('/:id/content', async (req, res) => {
     `attachment; filename="${upload.originalName.replace(/["\\]/g, '_')}"`
   );
 
-  // Do not read the entire file into memory.
+  // Stream the file instead of loading it entirely into memory.
   const fileStream = createReadStream(filePath);
 
   fileStream.on('error', (error) => {
-    console.error('[upload] download stream error:', error.message);
+    console.error(
+      '[upload] download stream error:',
+      error.message
+    );
 
     if (!res.headersSent) {
       res.status(500).end();
