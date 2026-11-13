@@ -1,5 +1,6 @@
 
 import { createWriteStream } from 'node:fs';
+import { stat } from 'node:fs/promises';
 import { unlink } from 'node:fs/promises';
 import { Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
@@ -155,6 +156,18 @@ export async function streamUpload({
   } catch (error) {
     // Avoid orphaned files if streaming or MongoDB fails.
     await unlink(destination).catch(() => {});
+    throw error;
+  }
+}
+
+
+export async function assertUploadFileExists(filePath) {
+  try {
+    await stat(filePath);
+  } catch (error) {
+    if (error.code === 'ENOENT' || error.code === 'ENOTDIR') {
+      throw new AppError('Uploaded file is no longer available', 404, 'UPLOAD_FILE_NOT_FOUND');
+    }
     throw error;
   }
 }
