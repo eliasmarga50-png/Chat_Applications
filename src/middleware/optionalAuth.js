@@ -1,16 +1,9 @@
 
 import { requireAuth } from './requireAuth.js';
 
-// Authentication is optional for this request.
-// If a Bearer token is supplied, it must be valid.
+// Public resources remain anonymous when no Authorization header is present.
+// A supplied credential is never silently ignored: malformed/invalid JWTs fail.
 export async function optionalAuth(req, res, next) {
-  const authorization = req.headers.authorization;
-
-  // No token: continue as an unauthenticated request.
-  if (authorization === undefined) {
-    return next();
-  }
-
-  // A supplied token must pass the normal authentication checks.
+  if (req.headers.authorization === undefined) return next();
   return requireAuth(req, res, next);
 }
