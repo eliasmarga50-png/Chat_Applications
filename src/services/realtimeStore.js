@@ -16,11 +16,20 @@ const REGISTER_SOCKET = `
   return { first, redis.call('SCARD', KEYS[3]) }
 `;
 
+
 const JOIN_ROOM = `
   local added = redis.call('SADD', KEYS[1], ARGV[1])
   redis.call('SADD', KEYS[2], ARGV[2])
-  return added
+
+  local socketCount = redis.call('SCARD', KEYS[1])
+
+  if added == 1 and socketCount == 1 then
+    return 1
+  end
+
+  return 0
 `;
+
 
 const LEAVE_ROOM = `
   local removed = redis.call('SREM', KEYS[1], ARGV[1])
