@@ -3,8 +3,8 @@
  * Cross-Worker Messaging Verification
  *
  * Verifies:
- *   1. Two clients connect to different Node.js workers.
- *   2. A message sent by Worker A reaches a client on Worker B.
+ *   1. Ada and Linus connect to different Node.js workers.
+ *   2. A message sent by Ada reaches Linus across workers.
  *   3. The message is persisted in MongoDB.
  *   4. Exactly one MongoDB document exists for the test message.
  *
@@ -62,7 +62,7 @@ async function login(username) {
   return body;
 }
 
-function connect(token) {
+function connect(token, username) {
   return new Promise((resolve, reject) => {
     const socket = connectClient(URL, {
       auth: { token },
@@ -73,37 +73,54 @@ function connect(token) {
     sockets.push(socket);
 
     let instancePid;
+    let settled = false;
 
     const timeout = setTimeout(() => {
-      socket.disconnect();
-      reject(new Error('Worker identification timed out'));
-    }, 10000);
+      finish(
+        new Error(
+          `Worker identification timed out for ${username}`
+        )
+      );
+    }, 15000);
+
+    function finish(error, result) {
+      if (settled) return;
+
+      settled = true;
+      clearTimeout(timeout);
+
+      if (error) {
+        socket.disconnect();
+        reject(error);
+      } else {
+        resolve(result);
+      }
+    }
 
     socket.on('server:instance', (data) => {
-      instancePid = data.pid;
+      instancePid = data?.pid;
 
-      if (socket.connected) {
-        clearTimeout(timeout);
-        resolve({
+      if (socket.connected && instancePid !== undefined) {
+        finish(null, {
           socket,
           pid: instancePid,
+          username,
+        });
+      }
+    });
+
+    socket.once('connect', () => {
+      if (instancePid !== undefined) {
+        finish(null, {
+          socket,
+          pid: instancePid,
+          username,
         });
       }
     });
 
     socket.once('connect_error', (error) => {
-      clearTimeout(timeout);
-      reject(error);
-    });
-
-    socket.once('connect', () => {
-      if (instancePid !== undefined) {
-        clearTimeout(timeout);
-        resolve({
-          socket,
-          pid: instancePid,
-        });
-      }
+      finish(error);
     });
   });
 }
@@ -139,38 +156,70 @@ async function joinRoom(socket, slug) {
 }
 
 async function connectToDifferentWorkers(tokenA, tokenB) {
-  const clients = [];
+  console.log('  Opening authenticated connections...');
 
-  // Cluster workers share the same listening port.
-  // Multiple connections let us discover distinct workers.
-  for (let i = 0; i < 12; i++) {
-    const client = await connect(i % 2 === 0 ? tokenA : tokenB);
+  // Windows cluster connection distribution may vary.
+  // Use multiple authenticated connections to discover workers.
+  const attempts = 32;
 
-    clients.push(client);
+  const clients = await Promise.all(
+    Array.from({ length: attempts }, (_, index) => {
+      const isAda = index % 2 === 0;
 
-    const first = clients[0];
+      return connect(
+        isAda ? tokenA : tokenB,
+        isAda ? 'ada' : 'linus'
+      );
+    })
+  );
 
-    const different = clients.find(
-      (candidate) => candidate.pid !== first.pid
-    );
+  const workerPids = new Set(
+    clients.map((client) => client.pid)
+  );
 
-    if (different) {
-      return {
-        workerA: first,
-        workerB: different,
-        extraClients: clients.filter(
-          (candidate) =>
-            candidate !== first &&
-            candidate !== different
-        ),
-      };
-    }
+  console.log(
+    `  Observed ${clients.length} connections across ` +
+    `${workerPids.size} worker(s)`
+  );
+
+  for (const pid of workerPids) {
+    const count = clients.filter(
+      (client) => client.pid === pid
+    ).length;
+
+    console.log(`    Worker ${pid}: ${count} connections`);
   }
 
-  throw new Error(
-    'Could not connect clients to different workers. ' +
-    'Check WEB_CONCURRENCY and Redis adapter configuration.'
+  // Find Ada and Linus specifically on different workers.
+  const workerA = clients.find(
+    (client) =>
+      client.username === 'ada' &&
+      clients.some(
+        (candidate) =>
+          candidate.username === 'linus' &&
+          candidate.pid !== client.pid
+      )
   );
+
+  if (!workerA) {
+    throw new Error(
+      'Could not find Ada and Linus on separate workers. ' +
+      `Observed worker PIDs: ${[...workerPids].join(', ')}`
+    );
+  }
+
+  const workerB = clients.find(
+    (client) =>
+      client.username === 'linus' &&
+      client.pid !== workerA.pid
+  );
+
+  assert.ok(workerB);
+
+  return {
+    workerA,
+    workerB,
+  };
 }
 
 async function main() {
@@ -214,13 +263,14 @@ async function main() {
 
   console.log('\n2. Worker distribution');
 
-  const {
-    workerA,
-    workerB,
-  } = await connectToDifferentWorkers(
-    adaLogin.token,
-    linusLogin.token
-  );
+  const { workerA, workerB } =
+    await connectToDifferentWorkers(
+      adaLogin.token,
+      linusLogin.token
+    );
+
+  assert.equal(workerA.username, 'ada');
+  assert.equal(workerB.username, 'linus');
 
   assert.notEqual(
     workerA.pid,
@@ -228,10 +278,10 @@ async function main() {
     'Clients must connect to different worker processes'
   );
 
-  console.log(`  Worker A PID: ${workerA.pid}`);
-  console.log(`  Worker B PID: ${workerB.pid}`);
+  console.log(`  Ada (Worker A): ${workerA.pid}`);
+  console.log(`  Linus (Worker B): ${workerB.pid}`);
 
-  logSuccess('Clients connected to separate workers');
+  logSuccess('Ada and Linus connected to separate workers');
 
   const ada = workerA.socket;
   const linus = workerB.socket;
@@ -256,7 +306,6 @@ async function main() {
   const uniqueContent =
     `Cross-worker verification ${Date.now()}-${process.pid}`;
 
-  // Register listener before sending.
   const receivedPromise = waitFor(
     linus,
     'message:new'
@@ -319,10 +368,12 @@ async function main() {
     String(room._id)
   );
 
-  logSuccess('Message persisted with correct room, sender and content');
+  logSuccess(
+    'Message persisted with correct room, sender and content'
+  );
 
   // --------------------------------------
-  // 6. EXACTLY-ONCE WRITE VERIFICATION
+  // 6. EXACTLY-ONCE PERSISTENCE
   // --------------------------------------
 
   console.log('\n6. Exactly-once persistence');
@@ -339,7 +390,9 @@ async function main() {
     `Expected exactly one document, found ${matchingDocuments}`
   );
 
-  logSuccess('Exactly one MongoDB document exists for the message');
+  logSuccess(
+    'Exactly one MongoDB document exists for the message'
+  );
 
   // --------------------------------------
   // RESULTS
