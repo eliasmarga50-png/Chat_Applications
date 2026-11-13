@@ -6,6 +6,7 @@ import { env } from './config/env.js';
 import { connectDB, disconnectDB } from './config/db.js';
 import { createApp } from './app.js';
 import { createSocketServer } from './sockets/index.js';
+import { initializeRedis, closeRedis } from './config/redis.js';
 
 let server;
 let io;
@@ -33,6 +34,7 @@ async function shutdown(reason, exitCode = 0) {
     }
 
     await disconnectDB();
+    await closeRedis();
 
     console.log('[shutdown] clean');
   } catch (err) {
@@ -58,6 +60,8 @@ process.on('SIGTERM', () => shutdown('SIGTERM'));
 
 async function main() {
   await connectDB();
+
+  await initializeRedis();
 
   await initializeStorage();
 
