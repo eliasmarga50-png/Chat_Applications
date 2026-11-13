@@ -5,18 +5,25 @@
   "description": "A production-ready, highly scalable, and secure real-time chat application backend specifically engineered for developer communities. This backend forms the core of a MERN-stack architecture, utilizing Node.js, Express, Socket.io, and MongoDB (Mongoose) to deliver robust communication streams, sandboxed code execution, and high-performance data handling.",
   "main": "src/server.js",
   "type": "module",
-  "scripts": {
-    "start": "node src/server.js",
-    "dev": "node --watch --env-file=.env src/server.js",
-    "start:cluster": "node --env-file=.env src/cluster.js",
-    "test": "node --env-file=.env --test",
-    "seed": "node --env-file=.env scripts/seed.js",
-    "verify:models": "node --env-file=.env scripts/verify-models.js",
-    "verify:socket": "node --env-file=.env scripts/verify-socket.js",
-    "verify:re": "node --env-file=.env scripts/verify-re.js",
-    "verify:security": "node --env-file=.env scripts/verify-security.js",
-    "verify:cluster": "node --env-file=.env scripts/verify-cluster.js"
-  },
+  
+"scripts": {
+  "start": "node src/server.js",
+  "dev": "node --watch --env-file=.env src/server.js",
+  "start:cluster": "node --env-file=.env src/cluster.js",
+
+  "test": "node --env-file=.env --test",
+  "test:auth": "node --env-file=.env --test test/authRoomAccess.test.js",
+  "test:redis": "node --env-file=.env --test test/realtimeRedis.integration.test.js",
+  "test:rate-limit": "node --env-file=.env --test test/sharedRateLimit.test.js",
+
+  "seed": "node --env-file=.env scripts/seed.js",
+  "verify:models": "node --env-file=.env scripts/verify-models.js",
+  "verify:socket": "node --env-file=.env scripts/verify-socket.js",
+  "verify:re": "node --env-file=.env scripts/verify-re.js",
+  "verify:security": "node --env-file=.env scripts/verify-security.js",
+  "verify:cluster": "node --env-file=.env scripts/verify-cluster.js"
+}
+,
   "engines": {
     "node": ">=20.6"
   },
