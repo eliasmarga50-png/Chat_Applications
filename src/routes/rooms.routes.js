@@ -1,3 +1,4 @@
+
 import { Router } from 'express';
 
 import { Room, Message } from '../models/index.js';
@@ -7,6 +8,7 @@ import { env } from '../config/env.js';
 import { ensureRoomAccess } from '../utils/roomAccess.js';
 
 import { sanitizeContent } from '../utils/sanitizeContent.js';
+import { optionalAuth } from '../middleware/optionalAuth.js';
 
 const router = Router();
 
@@ -134,6 +136,8 @@ function parseCursorId(rawId) {
 // GET /api/rooms
 // ----------------------------------------
 
+// Public room listing.
+// No authentication is required.
 router.get('/', async (req, res) => {
   const rooms = await Room.find({
     isPrivate: false,
@@ -167,11 +171,15 @@ if (!env.isProd) {
 // GET /api/rooms/:slug
 // ----------------------------------------
 
-router.get('/:slug', async (req, res) => {
+// Authentication is optional here because public rooms
+// should remain accessible without a JWT.
+router.get('/:slug', optionalAuth, async (req, res) => {
   const room = await findRoomOr404(
     req.params.slug
   );
 
+  // Public rooms pass without a user.
+  // Private rooms require authentication and membership.
   await ensureRoomAccess(
     room,
     req.user?._id
@@ -181,10 +189,10 @@ router.get('/:slug', async (req, res) => {
 });
 
 // ----------------------------------------
-// GET ROOM MESSAGES
+// GET /api/rooms/:slug/messages
 // ----------------------------------------
 
-router.get('/:slug/messages', async (req, res) => {
+router.get('/:slug/messages', optionalAuth, async (req, res) => {
   const room = await findRoomOr404(
     req.params.slug
   );
