@@ -79,6 +79,9 @@ export async function createSocketServer(httpServer) {
   io.use(authenticate);
 
   io.on('connection', (socket) => {
+    socket.emit('server:instance', {
+         pid: process.pid,
+      });
     console.log(
       `[socket] connected ${socket.data.user.username} (${socket.id})`
     );
