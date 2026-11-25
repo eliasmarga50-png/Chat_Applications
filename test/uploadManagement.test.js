@@ -1,12 +1,10 @@
 
-import test from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import { randomUUID } from "node:crypto";
 import { writeFile, readFile, rm } from "node:fs/promises";
 import path from "node:path";
 import test, { after } from "node:test";
-import { User } from "../src/models/index.js";
 
 import { createApp } from "../src/app.js";
 import { User } from "../src/models/index.js";
