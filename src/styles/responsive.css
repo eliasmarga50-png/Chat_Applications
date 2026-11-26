@@ -1,0 +1,69 @@
+
+/* =================================
+   RESPONSIVE LAYOUT UTILITIES
+================================= */
+
+.container {
+  width: 100%;
+  max-width: var(--content-max-width);
+  margin-inline: auto;
+  padding-inline: var(--page-padding);
+}
+
+.flex-center {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.flex-between {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.flex-wrap {
+  flex-wrap: wrap;
+}
+
+.min-width-0 {
+  min-width: 0;
+}
+
+.full-width {
+  width: 100%;
+}
+
+.text-truncate {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Tablet */
+
+@media (max-width: 1050px) {
+  :root {
+    --page-padding: 20px;
+  }
+}
+
+/* Mobile */
+
+@media (max-width: 760px) {
+  :root {
+    --page-padding: 15px;
+  }
+
+  .hide-mobile {
+    display: none !important;
+  }
+}
+
+/* Small mobile */
+
+@media (max-width: 420px) {
+  :root {
+    --page-padding: 12px;
+  }
+}
